@@ -32,8 +32,8 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	pb "github.com/golang/groupcache/groupcachepb"
-	testpb "github.com/golang/groupcache/testpb"
+	pb "groupcache/groupcachepb"
+	testpb "groupcache/testpb"
 )
 
 var (
@@ -59,7 +59,7 @@ const (
 )
 
 func testSetup() {
-	stringGroup = NewGroup(stringGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink) error {
+	stringGroup = NewGroup(stringGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
 		if key == fromChan {
 			key = <-stringc
 		}
@@ -67,7 +67,7 @@ func testSetup() {
 		return dest.SetString("ECHO:" + key)
 	}))
 
-	protoGroup = NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink) error {
+	protoGroup = NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
 		if key == fromChan {
 			key = <-stringc
 		}
@@ -90,7 +90,7 @@ func TestGetDupSuppressString(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			var s string
-			if err := stringGroup.Get(dummyCtx, fromChan, StringSink(&s)); err != nil {
+			if err := stringGroup.Get(dummyCtx, fromChan, StringSink(&s), nil); err != nil {
 				resc <- "ERROR:" + err.Error()
 				return
 			}
@@ -132,7 +132,7 @@ func TestGetDupSuppressProto(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			tm := new(testpb.TestMessage)
-			if err := protoGroup.Get(dummyCtx, fromChan, ProtoSink(tm)); err != nil {
+			if err := protoGroup.Get(dummyCtx, fromChan, ProtoSink(tm), nil); err != nil {
 				tm.Name = proto.String("ERROR:" + err.Error())
 			}
 			resc <- tm
@@ -176,7 +176,7 @@ func TestCaching(t *testing.T) {
 	fills := countFills(func() {
 		for i := 0; i < 10; i++ {
 			var s string
-			if err := stringGroup.Get(dummyCtx, "TestCaching-key", StringSink(&s)); err != nil {
+			if err := stringGroup.Get(dummyCtx, "TestCaching-key", StringSink(&s), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -192,7 +192,7 @@ func TestCacheEviction(t *testing.T) {
 	getTestKey := func() {
 		var res string
 		for i := 0; i < 10; i++ {
-			if err := stringGroup.Get(dummyCtx, testKey, StringSink(&res)); err != nil {
+			if err := stringGroup.Get(dummyCtx, testKey, StringSink(&res), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -211,7 +211,7 @@ func TestCacheEviction(t *testing.T) {
 	for bytesFlooded < cacheSize+1024 {
 		var res string
 		key := fmt.Sprintf("dummy-key-%d", bytesFlooded)
-		stringGroup.Get(dummyCtx, key, StringSink(&res))
+		stringGroup.Get(dummyCtx, key, StringSink(&res), nil)
 		bytesFlooded += int64(len(key) + len(res))
 	}
 	evicts := g.mainCache.nevict - evict0
@@ -260,9 +260,8 @@ func TestPeers(t *testing.T) {
 	peerList := fakePeers([]ProtoGetter{peer0, peer1, peer2, nil})
 	const cacheSize = 0 // disabled
 	localHits := 0
-	getter := func(_ context.Context, key string, dest Sink) error {
-		localHits++
-		return dest.SetString("got:" + key)
+	getter := func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
+		return dest.SetString(fixFunc().(string))
 	}
 	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter), peerList)
 	run := func(name string, n int, wantSummary string) {
@@ -276,7 +275,10 @@ func TestPeers(t *testing.T) {
 			key := fmt.Sprintf("key-%d", i)
 			want := "got:" + key
 			var got string
-			err := testGroup.Get(dummyCtx, key, StringSink(&got))
+			err := testGroup.Get(dummyCtx, key, StringSink(&got), func() interface{} {
+				localHits++
+				return "got:" + key
+			})
 			if err != nil {
 				t.Errorf("%s: error on key %q: %v", name, key, err)
 				continue
@@ -325,7 +327,7 @@ func TestPeers(t *testing.T) {
 func TestTruncatingByteSliceTarget(t *testing.T) {
 	var buf [100]byte
 	s := buf[:]
-	if err := stringGroup.Get(dummyCtx, "short", TruncatingByteSliceSink(&s)); err != nil {
+	if err := stringGroup.Get(dummyCtx, "short", TruncatingByteSliceSink(&s), nil); err != nil {
 		t.Fatal(err)
 	}
 	if want := "ECHO:short"; string(s) != want {
@@ -333,7 +335,7 @@ func TestTruncatingByteSliceTarget(t *testing.T) {
 	}
 
 	s = buf[:6]
-	if err := stringGroup.Get(dummyCtx, "truncated", TruncatingByteSliceSink(&s)); err != nil {
+	if err := stringGroup.Get(dummyCtx, "truncated", TruncatingByteSliceSink(&s), nil); err != nil {
 		t.Fatal(err)
 	}
 	if want := "ECHO:t"; string(s) != want {
@@ -388,7 +390,7 @@ func (g *orderedFlightGroup) Do(key string, fn func() (interface{}, error)) (int
 func TestNoDedup(t *testing.T) {
 	const testkey = "testkey"
 	const testval = "testval"
-	g := newGroup("testgroup", 1024, GetterFunc(func(_ context.Context, key string, dest Sink) error {
+	g := newGroup("testgroup", 1024, GetterFunc(func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
 		return dest.SetString(testval)
 	}), nil)
 
@@ -409,7 +411,7 @@ func TestNoDedup(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			var s string
-			if err := g.Get(dummyCtx, testkey, StringSink(&s)); err != nil {
+			if err := g.Get(dummyCtx, testkey, StringSink(&s), nil); err != nil {
 				resc <- "ERROR:" + err.Error()
 				return
 			}

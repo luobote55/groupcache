@@ -26,8 +26,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/golang/groupcache/consistenthash"
-	pb "github.com/golang/groupcache/groupcachepb"
+	"groupcache/consistenthash"
+	pb "groupcache/groupcachepb"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -167,7 +167,7 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	group.Stats.ServerRequests.Add(1)
 	var value []byte
-	err := group.Get(ctx, key, AllocatingByteSliceSink(&value))
+	err := group.Get(ctx, key, AllocatingByteSliceSink(&value), nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
