@@ -21,7 +21,7 @@ package groupcache
 import (
 	"context"
 
-	pb "groupcache/groupcachepb"
+	pb "github.com/golang/groupcache/groupcachepb"
 )
 
 // Context is an alias to context.Context for backwards compatibility purposes.
