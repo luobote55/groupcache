@@ -31,9 +31,9 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	pb "groupcache/groupcachepb"
+	pb "github.com/melojustme/groupcache/groupcachepb"
 
-	testpb "groupcache/testpb"
+	testpb "github.com/melojustme/groupcache/testpb"
 )
 
 var (
@@ -54,7 +54,7 @@ const (
 	stringGroupName = "string-group"
 	protoGroupName  = "proto-group"
 	expireGroupName = "expire-group"
-	testMessageType = "google3/net/groupcache/go/test_proto.TestMessage"
+	testMessageType = "google3/net/github.com/melojustme/groupcache/go/test_proto.TestMessage"
 	fromChan        = "from-chan"
 	cacheSize       = 1 << 20
 )

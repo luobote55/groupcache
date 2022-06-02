@@ -27,13 +27,14 @@ package groupcache
 import (
 	"context"
 	"errors"
-	pb "groupcache/groupcachepb"
-	"groupcache/lru"
-	"groupcache/singleflight"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	pb "github.com/melojustme/groupcache/groupcachepb"
+	"github.com/melojustme/groupcache/lru"
+	"github.com/melojustme/groupcache/singleflight"
 
 	"github.com/sirupsen/logrus"
 )

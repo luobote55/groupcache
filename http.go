@@ -20,8 +20,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"groupcache/consistenthash"
-	pb "groupcache/groupcachepb"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -30,10 +28,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/melojustme/groupcache/consistenthash"
+	pb "github.com/melojustme/groupcache/groupcachepb"
+
 	"github.com/golang/protobuf/proto"
 )
 
-const defaultBasePath = "/_groupcache/"
+const defaultBasePath = "/_github.com/melojustme/groupcache/"
 
 const defaultReplicas = 50
 
@@ -53,7 +54,7 @@ type HTTPPool struct {
 // HTTPPoolOptions are the configurations of a HTTPPool.
 type HTTPPoolOptions struct {
 	// BasePath specifies the HTTP path that will serve groupcache requests.
-	// If blank, it defaults to "/_groupcache/".
+	// If blank, it defaults to "/_github.com/melojustme/groupcache/".
 	BasePath string
 
 	// Replicas specifies the number of key replicas on the consistent hash.

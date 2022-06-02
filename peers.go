@@ -21,7 +21,7 @@ package groupcache
 import (
 	"context"
 
-	pb "groupcache/groupcachepb"
+	pb "github.com/melojustme/groupcache/groupcachepb"
 )
 
 // ProtoGetter is the interface that must be implemented by a peer.
