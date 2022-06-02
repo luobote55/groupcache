@@ -1,4 +1,4 @@
-module groupcache
+module github.com/melojustme/groupcache
 
 go 1.15
 
