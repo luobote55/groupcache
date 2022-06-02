@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"math/rand"
 	"reflect"
 	"sync"
 	"testing"
@@ -38,12 +37,12 @@ import (
 )
 
 var (
-	once                    sync.Once
-	stringGroup, protoGroup Getter
+	once                                 sync.Once
+	stringGroup, protoGroup, expireGroup Getter
 
 	stringc = make(chan string)
 
-	dummyCtx = context.TODO()
+	dummyCtx context.Context
 
 	// cacheFills is the number of times stringGroup or
 	// protoGroup's Getter have been called. Read using the
@@ -54,6 +53,7 @@ var (
 const (
 	stringGroupName = "string-group"
 	protoGroupName  = "proto-group"
+	expireGroupName = "expire-group"
 	testMessageType = "google3/net/groupcache/go/test_proto.TestMessage"
 	fromChan        = "from-chan"
 	cacheSize       = 1 << 20
@@ -65,7 +65,7 @@ func testSetup() {
 			key = <-stringc
 		}
 		cacheFills.Add(1)
-		return dest.SetString("ECHO:" + key)
+		return dest.SetString("ECHO:"+key, time.Time{})
 	}))
 
 	protoGroup = NewGroup(protoGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
@@ -76,11 +76,16 @@ func testSetup() {
 		return dest.SetProto(&testpb.TestMessage{
 			Name: proto.String("ECHO:" + key),
 			City: proto.String("SOME-CITY"),
-		})
+		}, time.Time{})
+	}))
+
+	expireGroup = NewGroup(expireGroupName, cacheSize, GetterFunc(func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
+		cacheFills.Add(1)
+		return dest.SetString("ECHO:"+key, time.Now().Add(time.Millisecond*100))
 	}))
 }
 
-// TestGetDupSuppressString tests that a Getter's Get method is only called once with two
+// tests that a Getter's Get method is only called once with two
 // outstanding callers.  This is the string variant.
 func TestGetDupSuppressString(t *testing.T) {
 	once.Do(testSetup)
@@ -122,7 +127,7 @@ func TestGetDupSuppressString(t *testing.T) {
 	}
 }
 
-// TestGetDupSuppressProto tests that a Getter's Get method is only called once with two
+// tests that a Getter's Get method is only called once with two
 // outstanding callers.  This is the proto variant.
 func TestGetDupSuppressProto(t *testing.T) {
 	once.Do(testSetup)
@@ -187,6 +192,24 @@ func TestCaching(t *testing.T) {
 	}
 }
 
+func TestCachingExpire(t *testing.T) {
+	once.Do(testSetup)
+	fills := countFills(func() {
+		for i := 0; i < 3; i++ {
+			var s string
+			if err := expireGroup.Get(dummyCtx, "TestCachingExpire-key", StringSink(&s), nil); err != nil {
+				t.Fatal(err)
+			}
+			if i == 1 {
+				time.Sleep(time.Millisecond * 150)
+			}
+		}
+	})
+	if fills != 2 {
+		t.Errorf("expected 2 cache fill; got %d", fills)
+	}
+}
+
 func TestCacheEviction(t *testing.T) {
 	once.Do(testSetup)
 	testKey := "TestCacheEviction-key"
@@ -241,6 +264,26 @@ func (p *fakePeer) Get(_ context.Context, in *pb.GetRequest, out *pb.GetResponse
 	return nil
 }
 
+func (p *fakePeer) Set(_ context.Context, in *pb.SetRequest) error {
+	p.hits++
+	if p.fail {
+		return errors.New("simulated error from peer")
+	}
+	return nil
+}
+
+func (p *fakePeer) Remove(_ context.Context, in *pb.GetRequest) error {
+	p.hits++
+	if p.fail {
+		return errors.New("simulated error from peer")
+	}
+	return nil
+}
+
+func (p *fakePeer) GetURL() string {
+	return "fakePeer"
+}
+
 type fakePeers []ProtoGetter
 
 func (p fakePeers) PickPeer(key string) (peer ProtoGetter, ok bool) {
@@ -251,10 +294,13 @@ func (p fakePeers) PickPeer(key string) (peer ProtoGetter, ok bool) {
 	return p[n], p[n] != nil
 }
 
-// TestPeers tests that peers (virtual, in-process) are hit, and how much.
+func (p fakePeers) GetAll() []ProtoGetter {
+	return p
+}
+
+// tests that peers (virtual, in-process) are hit, and how much.
 func TestPeers(t *testing.T) {
 	once.Do(testSetup)
-	rand.Seed(123)
 	peer0 := &fakePeer{}
 	peer1 := &fakePeer{}
 	peer2 := &fakePeer{}
@@ -262,7 +308,8 @@ func TestPeers(t *testing.T) {
 	const cacheSize = 0 // disabled
 	localHits := 0
 	getter := func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
-		return dest.SetString(fixFunc().(string))
+		localHits++
+		return dest.SetString("got:"+key, time.Time{})
 	}
 	testGroup := newGroup("TestPeers-group", cacheSize, GetterFunc(getter), peerList)
 	run := func(name string, n int, wantSummary string) {
@@ -276,10 +323,7 @@ func TestPeers(t *testing.T) {
 			key := fmt.Sprintf("key-%d", i)
 			want := "got:" + key
 			var got string
-			err := testGroup.Get(dummyCtx, key, StringSink(&got), func() interface{} {
-				localHits++
-				return "got:" + key
-			})
+			err := testGroup.Get(dummyCtx, key, StringSink(&got), nil)
 			if err != nil {
 				t.Errorf("%s: error on key %q: %v", name, key, err)
 				continue
@@ -306,9 +350,9 @@ func TestPeers(t *testing.T) {
 	resetCacheSize(1 << 20)
 	run("base", 200, "localHits = 49, peers = 51 49 51")
 
-	// Verify cache was hit.  All localHits are gone, and some of
-	// the peer hits (the ones randomly selected to be maybe hot)
-	run("cached_base", 200, "localHits = 0, peers = 49 47 48")
+	// Verify cache was hit.  All localHits and peers are gone as the hotCache has
+	// the data we need
+	run("cached_base", 200, "localHits = 0, peers = 0 0 0")
 	resetCacheSize(0)
 
 	// With one of the peers being down.
@@ -349,7 +393,7 @@ func TestAllocatingByteSliceTarget(t *testing.T) {
 	sink := AllocatingByteSliceSink(&dst)
 
 	inBytes := []byte("some bytes")
-	sink.SetBytes(inBytes)
+	sink.SetBytes(inBytes, time.Time{})
 	if want := "some bytes"; string(dst) != want {
 		t.Errorf("SetBytes resulted in %q; want %q", dst, want)
 	}
@@ -386,13 +430,17 @@ func (g *orderedFlightGroup) Do(key string, fn func() (interface{}, error)) (int
 	return g.orig.Do(key, fn)
 }
 
+func (g *orderedFlightGroup) Lock(fn func()) {
+	fn()
+}
+
 // TestNoDedup tests invariants on the cache size when singleflight is
 // unable to dedup calls.
 func TestNoDedup(t *testing.T) {
 	const testkey = "testkey"
 	const testval = "testval"
 	g := newGroup("testgroup", 1024, GetterFunc(func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
-		return dest.SetString(testval)
+		return dest.SetString(testval, time.Time{})
 	}), nil)
 
 	orderedGroup := &orderedFlightGroup{
@@ -456,5 +504,35 @@ func TestGroupStatsAlignment(t *testing.T) {
 	}
 }
 
-// TODO(bradfitz): port the Google-internal full integration test into here,
-// using HTTP requests instead of our RPC system.
+type slowPeer struct {
+	fakePeer
+}
+
+func (p *slowPeer) Get(_ context.Context, in *pb.GetRequest, out *pb.GetResponse) error {
+	time.Sleep(time.Second)
+	out.Value = []byte("got:" + in.GetKey())
+	return nil
+}
+
+func TestContextDeadlineOnPeer(t *testing.T) {
+	once.Do(testSetup)
+	peer0 := &slowPeer{}
+	peer1 := &slowPeer{}
+	peer2 := &slowPeer{}
+	peerList := fakePeers([]ProtoGetter{peer0, peer1, peer2, nil})
+	getter := func(_ context.Context, key string, dest Sink, fixFunc func() interface{}) error {
+		return dest.SetString("got:"+key, time.Time{})
+	}
+	testGroup := newGroup("TestContextDeadlineOnPeer-group", cacheSize, GetterFunc(getter), peerList)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*300)
+	defer cancel()
+
+	var got string
+	err := testGroup.Get(ctx, "test-key", StringSink(&got), nil)
+	if err != nil {
+		if err != context.DeadlineExceeded {
+			t.Errorf("expected Get to return context deadline exceeded")
+		}
+	}
+}
