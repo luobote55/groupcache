@@ -21,15 +21,16 @@ package groupcache
 import (
 	"context"
 
-	pb "github.com/golang/groupcache/groupcachepb"
+	pb "github.com/melojustme/groupcache/groupcachepb"
 )
-
-// Context is an alias to context.Context for backwards compatibility purposes.
-type Context = context.Context
 
 // ProtoGetter is the interface that must be implemented by a peer.
 type ProtoGetter interface {
-	Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) error
+	Get(context context.Context, in *pb.GetRequest, out *pb.GetResponse) error
+	Remove(context context.Context, in *pb.GetRequest) error
+	Set(context context.Context, in *pb.SetRequest) error
+	// GetURL returns the peer URL
+	GetURL() string
 }
 
 // PeerPicker is the interface that must be implemented to locate
@@ -39,12 +40,15 @@ type PeerPicker interface {
 	// and true to indicate that a remote peer was nominated.
 	// It returns nil, false if the key owner is the current peer.
 	PickPeer(key string) (peer ProtoGetter, ok bool)
+	// GetAll returns all the peers in the group
+	GetAll() []ProtoGetter
 }
 
 // NoPeers is an implementation of PeerPicker that never finds a peer.
 type NoPeers struct{}
 
 func (NoPeers) PickPeer(key string) (peer ProtoGetter, ok bool) { return }
+func (NoPeers) GetAll() []ProtoGetter                           { return []ProtoGetter{} }
 
 var (
 	portPicker func(groupName string) PeerPicker

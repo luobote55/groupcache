@@ -72,3 +72,12 @@ See http://talks.golang.org/2013/oscon-dl.slide
 ## Help
 
 Use the golang-nuts mailing list for any discussion or questions.
+
+
+
+## Proto
+
+```
+  protoc --go_out=plugins=grpc:. groupcachepb/*.proto
+
+```

@@ -16,7 +16,8 @@ limitations under the License.
 
 syntax = "proto2";
 
-package groupcachepb;
+option go_package = "/groupcachepb";
+
 
 message GetRequest {
   required string group = 1;
@@ -26,6 +27,14 @@ message GetRequest {
 message GetResponse {
   optional bytes value = 1;
   optional double minute_qps = 2;
+  optional int64 expire = 3;
+}
+
+message SetRequest {
+  required string group = 1;
+  required string key = 2;
+  optional bytes value = 3;
+  optional int64 expire = 4;
 }
 
 service GroupCache {
