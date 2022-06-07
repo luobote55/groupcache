@@ -27,9 +27,9 @@ package groupcache
 import (
 	"context"
 	"errors"
-	pb "github.com/golang/groupcache/groupcachepb"
-	"github.com/golang/groupcache/lru"
-	"github.com/golang/groupcache/singleflight"
+	pb "github.com/luobote55/groupcache/groupcachepb"
+	"github.com/luobote55/groupcache/lru"
+	"github.com/luobote55/groupcache/singleflight"
 	"math/rand"
 	"strconv"
 	"sync"
